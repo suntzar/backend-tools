@@ -1,4 +1,4 @@
-// index.js - Versão 4.0, com controle fino de bitrate e sample rate
+// index.js - Versão 5.0, Modo Engenheiro com controle total
 
 const express = require('express');
 const multer = require('multer');
@@ -23,36 +23,49 @@ app.post('/convert', upload.single('audioFile'), (req, res) => {
         return res.status(400).json({ error: 'Nenhum arquivo de áudio enviado.' });
     }
 
-    // --- CONTROLE DE BITRATE (QUALIDADE) ---
-    // Valores de '-q:a' para Vorbis. Vamos usar uma escala de -1 a 10.
-    // Padrão para 2 se não for especificado.
-    const quality = parseInt(req.body.quality, 10);
-    const qscaleValue = (quality >= -1 && quality <= 10) ? quality : 2;
-
-    // --- CONTROLE DE TAXA DE AMOSTRAGEM (SAMPLE RATE) ---
-    // Padrão para 'auto' (não modificar) se não for especificado.
-    const sampleRate = req.body.sampleRate;
-    const validSampleRates = ['44100', '32000', '22050', '16000'];
+    const {
+        bitrateMode, // 'quality' ou 'bitrate'
+        quality,     // -1 a 10
+        bitrate,     // ex: '64k'
+        sampleRate,  // ex: 22050
+        channels     // '1' ou '2'
+    } = req.body;
 
     const inputPath = req.file.path;
     const outputFilename = `${path.parse(req.file.filename).name}.ogg`;
     const outputPath = path.join(__dirname, 'uploads', outputFilename);
 
-    console.log(`[INFO] Recebido: ${req.file.originalname}. Bitrate (q:a): ${qscaleValue}. Sample Rate: ${sampleRate || 'auto'}`);
+    // --- Montagem do comando FFmpeg com controle granular ---
+    const args = ['-i', inputPath, '-c:a', 'libvorbis'];
+    let finalFilenameParts = [path.parse(req.file.originalname).name];
 
-    // --- Montagem dinâmica dos argumentos do FFmpeg ---
-    const args = [
-        '-i', inputPath,
-        '-c:a', 'libvorbis',
-        '-q:a', qscaleValue.toString() // Argumento de qualidade (bitrate)
-    ];
-
-    // Adiciona o argumento de sample rate APENAS se for um valor válido
-    if (validSampleRates.includes(sampleRate)) {
-        args.push('-ar', sampleRate); // '-ar' define a taxa de amostragem de áudio
+    // 1. Modo de Bitrate
+    if (bitrateMode === 'bitrate' && bitrate && /^\d+k$/.test(bitrate)) {
+        args.push('-b:a', bitrate);
+        finalFilenameParts.push(`${bitrate}`);
+    } else { // Padrão é 'quality'
+        const q_val = parseInt(quality, 10);
+        const safe_q = (q_val >= -1 && q_val <= 10) ? q_val : 4; // Padrão seguro
+        args.push('-q:a', safe_q.toString());
+        finalFilenameParts.push(`q${safe_q}`);
+    }
+    
+    // 2. Taxa de Amostragem
+    const sr_val = parseInt(sampleRate, 10);
+    if (sr_val > 8000 && sr_val <= 48000) {
+        args.push('-ar', sr_val.toString());
+        finalFilenameParts.push(`${sr_val}hz`);
     }
 
-    args.push(outputPath); // Arquivo de saída
+    // 3. Canais de Áudio
+    if (channels === '1' || channels === '2') {
+        args.push('-ac', channels);
+        finalFilenameParts.push(channels === '1' ? 'mono' : 'stereo');
+    }
+    
+    args.push(outputPath);
+
+    console.log(`[EXEC] Executando comando: ffmpeg ${args.join(' ')}`);
 
     execFile(ffmpegPath, args, (error, stdout, stderr) => {
         const cleanup = () => {
@@ -63,21 +76,17 @@ app.post('/convert', upload.single('audioFile'), (req, res) => {
         if (error) {
             console.error(`[ERROR] FFmpeg falhou: ${stderr}`);
             cleanup();
-            return res.status(500).json({ error: 'Falha na conversão do áudio.', details: stderr });
+            return res.status(500).json({ error: 'Falha na conversão.', details: stderr });
         }
-
-        console.log(`[SUCCESS] Conversão finalizada com sucesso.`);
         
-        const finalFilename = `${path.parse(req.file.originalname).name}_q${qscaleValue}_${sampleRate || 'original'}Hz.ogg`;
+        const finalFilename = `${finalFilenameParts.join('_')}.ogg`;
         res.download(outputPath, finalFilename, (downloadError) => {
-            if (downloadError) {
-                console.error(`[ERROR] Falha ao enviar o arquivo: ${downloadError}`);
-            }
+            if (downloadError) console.error(`[ERROR] Falha ao enviar arquivo: ${downloadError}`);
             cleanup();
         });
     });
 });
 
 app.listen(PORT, () => {
-    console.log(`Servidor de conversão v4 (controle fino) pronto na porta ${PORT}`);
+    console.log(`Servidor de conversão v5 (Modo Engenheiro) pronto na porta ${PORT}`);
 });
