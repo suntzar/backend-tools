@@ -1,0 +1,10 @@
+# Arquivos gerados pelo Node.js
+node_modules/
+npm-debug.log
+package-lock.json
+
+# Arquivos temporários de upload
+uploads/
+
+# Arquivos de ambiente (se você usar)
+.env
