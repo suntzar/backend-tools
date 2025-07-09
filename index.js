@@ -1,4 +1,4 @@
-// index.js - Servidor de conversão de áudio para OGG
+// index.js - Versão 3.0, com controle de qualidade
 
 const express = require('express');
 const multer = require('multer');
@@ -9,44 +9,47 @@ const { execFile } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
 
 const app = express();
-const PORT = process.env.PORT || 3000; // O Railway vai injetar a porta correta aqui
+const PORT = process.env.PORT || 3000;
 
-// Middleware para habilitar CORS (permite que seu HTML chame a API)
 app.use(cors());
-
-// Configura o multer para lidar com o upload de arquivos temporariamente
 const upload = multer({ dest: 'uploads/' });
 
-// Cria a pasta de uploads se ela não existir
 if (!fs.existsSync('uploads')) {
     fs.mkdirSync('uploads');
 }
 
-// O único endpoint da nossa API: /convert
 app.post('/convert', upload.single('audioFile'), (req, res) => {
-    // Validação: Garante que um arquivo foi enviado
     if (!req.file) {
         return res.status(400).json({ error: 'Nenhum arquivo de áudio enviado.' });
     }
+
+    // --- NOVA FUNCIONALIDADE: Controle de Qualidade ---
+    // Pegamos o valor 'quality' do corpo da requisição. Se não for enviado, usamos '5' (Equilibrado) como padrão.
+    const qualityProfile = req.body.quality || '5';
+    
+    // Validamos para garantir que é um dos valores esperados, por segurança.
+    const validProfiles = {
+        'alta': '8',
+        'equilibrada': '5',
+        'otimizada': '2'
+    };
+    const qscaleValue = validProfiles[qualityProfile] || validProfiles['equilibrada']; // Padrão para 'equilibrada' se um valor inválido for enviado
 
     const inputPath = req.file.path;
     const outputFilename = `${path.parse(req.file.filename).name}.ogg`;
     const outputPath = path.join(__dirname, 'uploads', outputFilename);
 
-    console.log(`[INFO] Recebido: ${req.file.originalname}. Convertendo para ${outputFilename}...`);
-    console.log(`[DEBUG] Caminho do FFmpeg: ${ffmpegPath}`);
-
-    // Argumentos para o comando FFmpeg
+    console.log(`[INFO] Recebido: ${req.file.originalname}. Perfil de qualidade: ${qualityProfile} (q:a ${qscaleValue})`);
+    
+    // --- Argumentos do FFmpeg atualizados ---
     const args = [
         '-i', inputPath,
-        '-c:a', 'libvorbis', // Codec de áudio padrão e de alta qualidade para OGG
-        '-q:a', '5',         // Qualidade do áudio (escala -1 a 10, 5 é um bom equilíbrio)
+        '-c:a', 'libvorbis',
+        '-q:a', qscaleValue, // Usamos o valor de qualidade recebido
         outputPath
     ];
 
-    // Executa o FFmpeg como um processo separado
     execFile(ffmpegPath, args, (error, stdout, stderr) => {
-        // Função de limpeza para apagar os arquivos temporários
         const cleanup = () => {
             fs.unlink(inputPath, err => err && console.error(`[CLEANUP] Falha ao remover input: ${err}`));
             fs.unlink(outputPath, err => err && console.error(`[CLEANUP] Falha ao remover output: ${err}`));
@@ -60,18 +63,16 @@ app.post('/convert', upload.single('audioFile'), (req, res) => {
 
         console.log(`[SUCCESS] Conversão finalizada com sucesso.`);
         
-        // Envia o arquivo convertido para o usuário como download
-        res.download(outputPath, `${path.parse(req.file.originalname).name}.ogg`, (downloadError) => {
+        const finalFilename = `${path.parse(req.file.originalname).name}_${qualityProfile}.ogg`;
+        res.download(outputPath, finalFilename, (downloadError) => {
             if (downloadError) {
                 console.error(`[ERROR] Falha ao enviar o arquivo: ${downloadError}`);
             }
-            // Limpa os arquivos independentemente de o download ter sido bem-sucedido ou não
             cleanup();
         });
     });
 });
 
-// Inicia o servidor
 app.listen(PORT, () => {
-    console.log(`Servidor de conversão pronto e ouvindo na porta ${PORT}`);
+    console.log(`Servidor de conversão v3 (com qualidade) pronto na porta ${PORT}`);
 });
